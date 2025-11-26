@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# HustleBot V2 (Next.js Port)
 
-## Getting Started
+Automated lead generation and outreach system powered by AI. Ported from React SPA to Next.js 15 (App Router).
 
-First, run the development server:
+## 🚀 Features
+
+- **Multi-Source Scraping**:
+  - **Reddit**: Scans `r/forhire`, `r/jobbit`, etc. for relevant gigs.
+  - **Upwork**: Monitors RSS feeds for specific keywords.
+  - **Craigslist**: Checks local classifieds for gigs.
+  - **Google Maps**: Finds local businesses without websites (using Puppeteer).
+- **AI Intelligence**:
+  - Uses **Google Gemini 2.5 Flash** to analyze lead relevance (0-100 score).
+  - Generates personalized, high-converting cold outreach pitches.
+- **WhatsApp Automation**:
+  - Integrated "Click to Chat" for instant outreach.
+  - Standalone worker for automated session management.
+- **Local Database**:
+  - Stores leads in `better-sqlite3` to prevent duplicates.
+
+## 🛠️ Prerequisites
+
+- **Node.js** (v18 or higher)
+- **Google Gemini API Key** (Get one from Google AI Studio)
+- **WhatsApp Account** (Phone with WhatsApp installed)
+
+## 📦 Installation
+
+1.  **Clone the repository** (if not already done).
+2.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
+
+## ⚙️ Configuration
+
+1.  Create a `.env.local` file in the root directory:
+    ```bash
+    cp .env.example .env.local # If example exists, otherwise just create it
+    ```
+2.  Add your API Key:
+    ```env
+    GEMINI_API_KEY=your_api_key_here
+    ```
+
+## 🏃‍♂️ Running Locally
+
+### 1. Start the WhatsApp Worker (Optional)
+
+If you want to maintain a persistent WhatsApp session:
+
+```bash
+npx tsx src/workers/whatsapp-worker.ts
+```
+
+_Scan the QR code with your phone when prompted._
+
+### 2. Run the Development Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Verify Scrapers (Backend Test)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+To test the scraping logic without the UI:
 
-## Learn More
+```bash
+npx tsx test-scrapers.ts
+```
 
-To learn more about Next.js, take a look at the following resources:
+## 🐳 Docker Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The application is containerized for easy deployment.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1.  **Build and Run**:
+    ```bash
+    docker-compose up --build -d
+    ```
+2.  **Access**:
+    The app will be available at `http://localhost:3000`.
+    _Note: Puppeteer runs in headless mode inside the container._
 
-## Deploy on Vercel
+## 📂 Project Structure
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `src/app`: Next.js App Router pages and layouts.
+- `src/actions`: Server Actions for backend logic (Scraping, AI).
+- `src/components`: UI Components (ConfigPanel, LeadFeed).
+- `src/lib`: Utilities (Database, Gemini Client).
+- `src/workers`: Standalone background workers.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## 🛡️ Anti-Ban Measures
+
+- Random User-Agent rotation for scrapers.
+- Randomized delays between requests.
+- Local caching of leads to prevent over-fetching.
+# hustle-bot
