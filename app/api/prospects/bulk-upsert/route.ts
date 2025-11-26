@@ -1,41 +1,66 @@
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/db";
+import { logger } from "@/lib/logger";
+import { bulkUpsertProspects, type ProspectPayload } from "@/lib/prospects";
 
-interface ProspectPayload {
-  source: string;
-  externalId: string;
-  name: string;
-  role?: string;
-  company?: string;
-  location?: string;
-  email?: string;
-  phone?: string;
-  tags?: string[];
-  metadata?: Record<string, unknown>;
-  status?: string;
-  score?: number;
-}
+const CONTEXT = "API:prospects/bulk-upsert";
 
 // POST /api/prospects/bulk-upsert - Bulk upsert prospects from scrapers
 export async function POST(request: NextRequest) {
+  logger.functionEntry("POST /api/prospects/bulk-upsert", {});
+
   try {
-    const body = await request.json();
+    let body: Record<string, unknown>;
+    try {
+      body = await request.json();
+      logger.debug(CONTEXT, "Request body parsed", {
+        hasProspects: !!body.prospects,
+        isArray: Array.isArray(body.prospects),
+        count: Array.isArray(body.prospects) ? body.prospects.length : 0,
+      });
+    } catch (error) {
+      logger.warn(CONTEXT, "Failed to parse request body", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return NextResponse.json(
+        { error: "Invalid JSON in request body" },
+        { status: 400 }
+      );
+    }
     
     if (!Array.isArray(body.prospects)) {
+      logger.warn(CONTEXT, "Expected 'prospects' array in request body", {
+        receivedType: typeof body.prospects,
+      });
       return NextResponse.json(
         { error: "Expected 'prospects' array in request body" },
         { status: 400 }
       );
     }
     
-    const prospects: ProspectPayload[] = body.prospects;
+    const prospects = body.prospects as Record<string, unknown>[];
+
+    logger.info(CONTEXT, "Starting bulk upsert", { prospectCount: prospects.length });
     
     // Validate all prospects have required fields
-    const invalidProspects = prospects.filter(
-      p => !p.source || !p.externalId || !p.name
-    );
+    const invalidProspects: number[] = [];
+    for (let i = 0; i < prospects.length; i++) {
+      const p = prospects[i];
+      if (!p.source || !p.externalId || !p.name) {
+        logger.debug(CONTEXT, "Invalid prospect found", {
+          index: i,
+          hasSource: !!p.source,
+          hasExternalId: !!p.externalId,
+          hasName: !!p.name,
+        });
+        invalidProspects.push(i);
+      }
+    }
     
     if (invalidProspects.length > 0) {
+      logger.warn(CONTEXT, "Some prospects are missing required fields", {
+        invalidCount: invalidProspects.length,
+        invalidIndices: invalidProspects.slice(0, 10),
+      });
       return NextResponse.json(
         { 
           error: "Some prospects are missing required fields (source, externalId, name)",
@@ -44,85 +69,53 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Convert to ProspectPayload type
+    const prospectPayloads: ProspectPayload[] = prospects.map(p => ({
+      source: p.source as string,
+      externalId: p.externalId as string,
+      name: p.name as string,
+      role: p.role as string | undefined,
+      company: p.company as string | undefined,
+      location: p.location as string | undefined,
+      email: p.email as string | undefined,
+      phone: p.phone as string | undefined,
+      tags: p.tags as string[] | undefined,
+      metadata: p.metadata as Record<string, unknown> | undefined,
+      status: p.status as string | undefined,
+      score: p.score as number | undefined,
+    }));
     
-    const results = {
-      created: 0,
-      updated: 0,
-      errors: [] as string[],
-    };
-    
-    // Process prospects in a transaction
-    await prisma.$transaction(async (tx) => {
-      for (const prospect of prospects) {
-        try {
-          // Try to find existing prospect by source + externalId
-          const existing = await tx.prospect.findUnique({
-            where: {
-              source_externalId: {
-                source: prospect.source,
-                externalId: prospect.externalId,
-              },
-            },
-          });
-          
-          const data = {
-            name: prospect.name,
-            role: prospect.role,
-            company: prospect.company,
-            location: prospect.location,
-            email: prospect.email,
-            phone: prospect.phone,
-            tags: JSON.stringify(prospect.tags || []),
-            metadata: JSON.stringify(prospect.metadata || {}),
-            status: prospect.status || "new",
-            score: prospect.score,
-          };
-          
-          if (existing) {
-            // Update existing prospect (merge data)
-            await tx.prospect.update({
-              where: { id: existing.id },
-              data: {
-                ...data,
-                // Preserve existing status unless explicitly provided
-                status: prospect.status || existing.status,
-                // Merge metadata
-                metadata: JSON.stringify({
-                  ...JSON.parse(existing.metadata),
-                  ...(prospect.metadata || {}),
-                }),
-              },
-            });
-            results.updated++;
-          } else {
-            // Create new prospect
-            await tx.prospect.create({
-              data: {
-                source: prospect.source,
-                externalId: prospect.externalId,
-                ...data,
-              },
-            });
-            results.created++;
-          }
-        } catch (error) {
-          results.errors.push(`Failed to upsert ${prospect.source}:${prospect.externalId}: ${error}`);
-        }
-      }
+    // Perform bulk upsert using service
+    const results = await bulkUpsertProspects(prospectPayloads);
+
+    logger.info(CONTEXT, "Bulk upsert completed", {
+      total: results.total,
+      created: results.created,
+      updated: results.updated,
+      errorCount: results.errorCount,
+    });
+
+    logger.functionExit("POST /api/prospects/bulk-upsert", {
+      success: true,
+      data: { created: results.created, updated: results.updated },
     });
     
     return NextResponse.json({
       success: true,
       results: {
-        total: prospects.length,
+        total: results.total,
         created: results.created,
         updated: results.updated,
-        errorCount: results.errors.length,
-        errors: results.errors.length > 0 ? results.errors.slice(0, 10) : undefined, // Limit error messages
+        errorCount: results.errorCount,
+        errors: results.errorCount > 0 ? results.errors.slice(0, 10) : undefined,
       },
     });
   } catch (error) {
-    console.error("Error bulk upserting prospects:", error);
+    logger.error(CONTEXT, "Error bulk upserting prospects", {
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+    logger.functionExit("POST /api/prospects/bulk-upsert", { success: false });
     return NextResponse.json(
       { error: "Failed to bulk upsert prospects" },
       { status: 500 }
