@@ -1,0 +1,5 @@
+{
+  "name": "HustleBot Dashboard",
+  "description": "A comprehensive freelance lead generation dashboard powered by Gemini. Replaces traditional scraping with AI-driven Search and Maps grounding to find leads on Reddit, Upwork, and Google Maps.",
+  "requestFramePermissions": []
+}
