@@ -7,6 +7,10 @@
  * 3. Filter in-memory collections
  */
 
+import { logger } from "@/lib/logger";
+
+const CONTEXT = "FiltersEngine";
+
 // Supported comparison operators
 export type ComparisonOperator = 
   | "eq"        // equals (=)
@@ -55,45 +59,106 @@ export type Filter = FilterCondition | FilterGroup | null;
  * Type guard to check if a filter is a FilterGroup
  */
 export function isFilterGroup(filter: Filter): filter is FilterGroup {
-  return filter !== null && "logic" in filter && "conditions" in filter;
+  logger.debug(CONTEXT, "isFilterGroup: checking filter type");
+  const result = filter !== null && "logic" in filter && "conditions" in filter;
+  logger.debug(CONTEXT, "isFilterGroup: result", { isGroup: result });
+  return result;
 }
 
 /**
  * Type guard to check if a filter is a FilterCondition
  */
 export function isFilterCondition(filter: Filter): filter is FilterCondition {
-  return filter !== null && "field" in filter && "operator" in filter && "value" in filter;
+  logger.debug(CONTEXT, "isFilterCondition: checking filter type");
+  const result = filter !== null && "field" in filter && "operator" in filter && "value" in filter;
+  logger.debug(CONTEXT, "isFilterCondition: result", { isCondition: result });
+  return result;
 }
 
 /**
  * Validate a filter structure
  */
 export function validateFilter(filter: unknown): filter is Filter {
-  if (filter === null) return true;
+  logger.functionEntry("validateFilter", { filterType: typeof filter });
+
+  if (filter === null) {
+    logger.branchTaken(CONTEXT, "filter is null - valid");
+    logger.functionExit("validateFilter", { success: true, data: { valid: true } });
+    return true;
+  }
   
-  if (typeof filter !== "object") return false;
+  if (typeof filter !== "object") {
+    logger.branchTaken(CONTEXT, "filter is not an object - invalid", { type: typeof filter });
+    logger.functionExit("validateFilter", { success: true, data: { valid: false } });
+    return false;
+  }
   
   // Check if it's a condition
   if ("field" in filter && "operator" in filter && "value" in filter) {
+    logger.branchTaken(CONTEXT, "filter appears to be a condition");
     const cond = filter as FilterCondition;
-    return typeof cond.field === "string" && 
+    const isValid = typeof cond.field === "string" && 
            typeof cond.operator === "string" &&
            isValidOperator(cond.operator);
+    logger.debug(CONTEXT, "validateFilter: condition validation result", {
+      field: cond.field,
+      operator: cond.operator,
+      isValid,
+    });
+    logger.functionExit("validateFilter", { success: true, data: { valid: isValid } });
+    return isValid;
   }
   
   // Check if it's a group
   if ("logic" in filter && "conditions" in filter) {
+    logger.branchTaken(CONTEXT, "filter appears to be a group");
     const group = filter as FilterGroup;
-    return (group.logic === "AND" || group.logic === "OR") &&
-           Array.isArray(group.conditions) &&
-           group.conditions.every(c => validateFilter(c));
+    const logicValid = group.logic === "AND" || group.logic === "OR";
+    const isArray = Array.isArray(group.conditions);
+    
+    logger.debug(CONTEXT, "validateFilter: group structure check", {
+      logic: group.logic,
+      logicValid,
+      isArray,
+      conditionCount: isArray ? group.conditions.length : 0,
+    });
+
+    if (!logicValid || !isArray) {
+      logger.functionExit("validateFilter", { success: true, data: { valid: false } });
+      return false;
+    }
+
+    // Validate each condition in the group
+    for (let i = 0; i < group.conditions.length; i++) {
+      logger.loopIteration(CONTEXT, "validating group condition", {
+        current: i + 1,
+        total: group.conditions.length,
+      });
+      if (!validateFilter(group.conditions[i])) {
+        logger.debug(CONTEXT, "validateFilter: condition at index failed validation", { index: i });
+        logger.functionExit("validateFilter", { success: true, data: { valid: false } });
+        return false;
+      }
+    }
+
+    logger.loopComplete(CONTEXT, "group condition validation", {
+      totalIterations: group.conditions.length,
+      successCount: group.conditions.length,
+    });
+    logger.functionExit("validateFilter", { success: true, data: { valid: true } });
+    return true;
   }
   
+  logger.branchTaken(CONTEXT, "filter structure not recognized - invalid");
+  logger.functionExit("validateFilter", { success: true, data: { valid: false } });
   return false;
 }
 
 function isValidOperator(op: string): op is ComparisonOperator {
-  return ["eq", "neq", "gt", "gte", "lt", "lte", "in", "notIn", "contains", "startsWith", "endsWith", "between"].includes(op);
+  const validOps = ["eq", "neq", "gt", "gte", "lt", "lte", "in", "notIn", "contains", "startsWith", "endsWith", "between"];
+  const isValid = validOps.includes(op);
+  logger.debug(CONTEXT, "isValidOperator: checking operator", { operator: op, isValid });
+  return isValid;
 }
 
 /**
@@ -102,61 +167,120 @@ function isValidOperator(op: string): op is ComparisonOperator {
  * you may need to filter in-memory after fetching
  */
 export function filterToPrismaWhere(filter: Filter): Record<string, unknown> {
-  if (filter === null) return {};
+  logger.functionEntry("filterToPrismaWhere", { hasFilter: filter !== null });
+
+  if (filter === null) {
+    logger.branchTaken(CONTEXT, "filter is null, returning empty where clause");
+    logger.functionExit("filterToPrismaWhere", { success: true, data: { keys: [] } });
+    return {};
+  }
   
   if (isFilterCondition(filter)) {
-    return conditionToPrismaWhere(filter);
+    logger.branchTaken(CONTEXT, "filter is a condition");
+    const result = conditionToPrismaWhere(filter);
+    logger.functionExit("filterToPrismaWhere", { success: true, data: { keys: Object.keys(result) } });
+    return result;
   }
   
   if (isFilterGroup(filter)) {
-    const subConditions = filter.conditions.map(c => filterToPrismaWhere(c));
-    return filter.logic === "AND" 
+    logger.branchTaken(CONTEXT, "filter is a group", { logic: filter.logic, conditionCount: filter.conditions.length });
+    
+    const subConditions: Record<string, unknown>[] = [];
+    for (let i = 0; i < filter.conditions.length; i++) {
+      logger.loopIteration(CONTEXT, "converting condition to prisma where", {
+        current: i + 1,
+        total: filter.conditions.length,
+      });
+      subConditions.push(filterToPrismaWhere(filter.conditions[i]));
+    }
+    logger.loopComplete(CONTEXT, "condition conversion", { totalIterations: filter.conditions.length });
+
+    const result = filter.logic === "AND" 
       ? { AND: subConditions }
       : { OR: subConditions };
+    
+    logger.functionExit("filterToPrismaWhere", { success: true, data: { logic: filter.logic, subConditionCount: subConditions.length } });
+    return result;
   }
   
+  logger.branchTaken(CONTEXT, "filter type not recognized, returning empty where clause");
+  logger.functionExit("filterToPrismaWhere", { success: true, data: { keys: [] } });
   return {};
 }
 
 function conditionToPrismaWhere(condition: FilterCondition): Record<string, unknown> {
   const { field, operator, value } = condition;
+  logger.debug(CONTEXT, "conditionToPrismaWhere: converting condition", { field, operator, valueType: typeof value });
+  
+  let result: Record<string, unknown>;
   
   switch (operator) {
     case "eq":
-      return { [field]: { equals: value } };
+      logger.branchTaken(CONTEXT, "operator: eq");
+      result = { [field]: { equals: value } };
+      break;
     case "neq":
-      return { [field]: { not: value } };
+      logger.branchTaken(CONTEXT, "operator: neq");
+      result = { [field]: { not: value } };
+      break;
     case "gt":
-      return { [field]: { gt: value } };
+      logger.branchTaken(CONTEXT, "operator: gt");
+      result = { [field]: { gt: value } };
+      break;
     case "gte":
-      return { [field]: { gte: value } };
+      logger.branchTaken(CONTEXT, "operator: gte");
+      result = { [field]: { gte: value } };
+      break;
     case "lt":
-      return { [field]: { lt: value } };
+      logger.branchTaken(CONTEXT, "operator: lt");
+      result = { [field]: { lt: value } };
+      break;
     case "lte":
-      return { [field]: { lte: value } };
+      logger.branchTaken(CONTEXT, "operator: lte");
+      result = { [field]: { lte: value } };
+      break;
     case "in":
-      return { [field]: { in: value } };
+      logger.branchTaken(CONTEXT, "operator: in", { valueIsArray: Array.isArray(value) });
+      result = { [field]: { in: value } };
+      break;
     case "notIn":
-      return { [field]: { notIn: value } };
+      logger.branchTaken(CONTEXT, "operator: notIn", { valueIsArray: Array.isArray(value) });
+      result = { [field]: { notIn: value } };
+      break;
     case "contains":
-      return { [field]: { contains: value } };
+      logger.branchTaken(CONTEXT, "operator: contains");
+      result = { [field]: { contains: value } };
+      break;
     case "startsWith":
-      return { [field]: { startsWith: value } };
+      logger.branchTaken(CONTEXT, "operator: startsWith");
+      result = { [field]: { startsWith: value } };
+      break;
     case "endsWith":
-      return { [field]: { endsWith: value } };
+      logger.branchTaken(CONTEXT, "operator: endsWith");
+      result = { [field]: { endsWith: value } };
+      break;
     case "between":
+      logger.branchTaken(CONTEXT, "operator: between");
       if (typeof value === "object" && value !== null && !Array.isArray(value) && "min" in value && "max" in value) {
-        return { 
+        logger.debug(CONTEXT, "conditionToPrismaWhere: between with valid min/max", { min: value.min, max: value.max });
+        result = { 
           AND: [
             { [field]: { gte: value.min } },
             { [field]: { lte: value.max } }
           ]
         };
+      } else {
+        logger.warn(CONTEXT, "conditionToPrismaWhere: between operator with invalid value structure");
+        result = {};
       }
-      return {};
+      break;
     default:
-      return {};
+      logger.warn(CONTEXT, "conditionToPrismaWhere: unknown operator", { operator });
+      result = {};
   }
+
+  logger.debug(CONTEXT, "conditionToPrismaWhere: result", { field, resultKeys: Object.keys(result) });
+  return result;
 }
 
 /**
@@ -167,26 +291,65 @@ export function filterCollection<T extends Record<string, unknown>>(
   items: T[],
   filter: Filter
 ): T[] {
-  if (filter === null) return items;
+  logger.functionEntry("filterCollection", { itemCount: items.length, hasFilter: filter !== null });
+
+  if (filter === null) {
+    logger.branchTaken(CONTEXT, "filter is null, returning all items");
+    logger.functionExit("filterCollection", { success: true, data: { resultCount: items.length } });
+    return items;
+  }
   
-  return items.filter(item => evaluateFilter(item, filter));
+  logger.debug(CONTEXT, "filterCollection: applying filter to items");
+  const result = items.filter(item => evaluateFilter(item, filter));
+  
+  logger.debug(CONTEXT, "filterCollection: filtering complete", {
+    inputCount: items.length,
+    outputCount: result.length,
+    filteredOut: items.length - result.length,
+  });
+  
+  logger.functionExit("filterCollection", { success: true, data: { resultCount: result.length } });
+  return result;
 }
 
 function evaluateFilter<T extends Record<string, unknown>>(item: T, filter: Filter): boolean {
-  if (filter === null) return true;
+  logger.debug(CONTEXT, "evaluateFilter: evaluating item against filter");
+
+  if (filter === null) {
+    logger.branchTaken(CONTEXT, "filter is null - item passes");
+    return true;
+  }
   
   if (isFilterCondition(filter)) {
+    logger.branchTaken(CONTEXT, "evaluating single condition", { field: filter.field });
     return evaluateCondition(item, filter);
   }
   
   if (isFilterGroup(filter)) {
+    logger.branchTaken(CONTEXT, "evaluating filter group", { logic: filter.logic, conditionCount: filter.conditions.length });
+    
     if (filter.logic === "AND") {
-      return filter.conditions.every(c => evaluateFilter(item, c));
+      logger.debug(CONTEXT, "evaluateFilter: AND logic - all conditions must pass");
+      for (let i = 0; i < filter.conditions.length; i++) {
+        if (!evaluateFilter(item, filter.conditions[i])) {
+          logger.debug(CONTEXT, "evaluateFilter: AND condition failed", { conditionIndex: i });
+          return false;
+        }
+      }
+      return true;
     } else {
-      return filter.conditions.some(c => evaluateFilter(item, c));
+      logger.debug(CONTEXT, "evaluateFilter: OR logic - any condition can pass");
+      for (let i = 0; i < filter.conditions.length; i++) {
+        if (evaluateFilter(item, filter.conditions[i])) {
+          logger.debug(CONTEXT, "evaluateFilter: OR condition passed", { conditionIndex: i });
+          return true;
+        }
+      }
+      return false;
     }
   }
   
+  logger.branchTaken(CONTEXT, "filter type not recognized - item passes by default");
   return true;
 }
 
@@ -195,56 +358,99 @@ function evaluateCondition<T extends Record<string, unknown>>(item: T, condition
   
   // Handle nested fields (e.g., "metadata.companySize")
   const itemValue = getNestedValue(item, field);
+  logger.debug(CONTEXT, "evaluateCondition: evaluating", { field, operator, itemValueType: typeof itemValue, valueType: typeof value });
+  
+  let result: boolean;
   
   switch (operator) {
     case "eq":
-      return itemValue === value;
+      result = itemValue === value;
+      logger.debug(CONTEXT, "evaluateCondition: eq", { match: result });
+      break;
     case "neq":
-      return itemValue !== value;
+      result = itemValue !== value;
+      logger.debug(CONTEXT, "evaluateCondition: neq", { match: result });
+      break;
     case "gt":
-      return typeof itemValue === "number" && typeof value === "number" && itemValue > value;
+      result = typeof itemValue === "number" && typeof value === "number" && itemValue > value;
+      logger.debug(CONTEXT, "evaluateCondition: gt", { match: result });
+      break;
     case "gte":
-      return typeof itemValue === "number" && typeof value === "number" && itemValue >= value;
+      result = typeof itemValue === "number" && typeof value === "number" && itemValue >= value;
+      logger.debug(CONTEXT, "evaluateCondition: gte", { match: result });
+      break;
     case "lt":
-      return typeof itemValue === "number" && typeof value === "number" && itemValue < value;
+      result = typeof itemValue === "number" && typeof value === "number" && itemValue < value;
+      logger.debug(CONTEXT, "evaluateCondition: lt", { match: result });
+      break;
     case "lte":
-      return typeof itemValue === "number" && typeof value === "number" && itemValue <= value;
+      result = typeof itemValue === "number" && typeof value === "number" && itemValue <= value;
+      logger.debug(CONTEXT, "evaluateCondition: lte", { match: result });
+      break;
     case "in":
-      return Array.isArray(value) && (value as (string | number)[]).includes(itemValue as string | number);
+      result = Array.isArray(value) && (value as (string | number)[]).includes(itemValue as string | number);
+      logger.debug(CONTEXT, "evaluateCondition: in", { match: result });
+      break;
     case "notIn":
-      return Array.isArray(value) && !(value as (string | number)[]).includes(itemValue as string | number);
+      result = Array.isArray(value) && !(value as (string | number)[]).includes(itemValue as string | number);
+      logger.debug(CONTEXT, "evaluateCondition: notIn", { match: result });
+      break;
     case "contains":
-      return typeof itemValue === "string" && typeof value === "string" && 
+      result = typeof itemValue === "string" && typeof value === "string" && 
              itemValue.toLowerCase().includes(value.toLowerCase());
+      logger.debug(CONTEXT, "evaluateCondition: contains", { match: result });
+      break;
     case "startsWith":
-      return typeof itemValue === "string" && typeof value === "string" && 
+      result = typeof itemValue === "string" && typeof value === "string" && 
              itemValue.toLowerCase().startsWith(value.toLowerCase());
+      logger.debug(CONTEXT, "evaluateCondition: startsWith", { match: result });
+      break;
     case "endsWith":
-      return typeof itemValue === "string" && typeof value === "string" && 
+      result = typeof itemValue === "string" && typeof value === "string" && 
              itemValue.toLowerCase().endsWith(value.toLowerCase());
+      logger.debug(CONTEXT, "evaluateCondition: endsWith", { match: result });
+      break;
     case "between":
       if (typeof value === "object" && value !== null && !Array.isArray(value) && "min" in value && "max" in value) {
         const numValue = typeof itemValue === "number" ? itemValue : parseFloat(String(itemValue));
         const min = typeof value.min === "number" ? value.min : parseFloat(String(value.min));
         const max = typeof value.max === "number" ? value.max : parseFloat(String(value.max));
-        return !isNaN(numValue) && !isNaN(min) && !isNaN(max) && numValue >= min && numValue <= max;
+        result = !isNaN(numValue) && !isNaN(min) && !isNaN(max) && numValue >= min && numValue <= max;
+        logger.debug(CONTEXT, "evaluateCondition: between", { numValue, min, max, match: result });
+      } else {
+        logger.warn(CONTEXT, "evaluateCondition: between operator with invalid value structure");
+        result = false;
       }
-      return false;
+      break;
     default:
-      return true;
+      logger.warn(CONTEXT, "evaluateCondition: unknown operator, returning true", { operator });
+      result = true;
   }
+  
+  return result;
 }
 
 function getNestedValue<T extends Record<string, unknown>>(obj: T, path: string): unknown {
+  logger.debug(CONTEXT, "getNestedValue: getting nested value", { path });
   const parts = path.split(".");
   let current: unknown = obj;
   
-  for (const part of parts) {
-    if (current === null || current === undefined) return undefined;
-    if (typeof current !== "object") return undefined;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    logger.debug(CONTEXT, "getNestedValue: traversing path part", { part, partIndex: i, totalParts: parts.length });
+    
+    if (current === null || current === undefined) {
+      logger.debug(CONTEXT, "getNestedValue: current is null/undefined, returning undefined");
+      return undefined;
+    }
+    if (typeof current !== "object") {
+      logger.debug(CONTEXT, "getNestedValue: current is not an object, returning undefined", { currentType: typeof current });
+      return undefined;
+    }
     current = (current as Record<string, unknown>)[part];
   }
   
+  logger.debug(CONTEXT, "getNestedValue: resolved value", { path, valueType: typeof current });
   return current;
 }
 
@@ -310,15 +516,28 @@ function formatValue(value: FilterValue): string {
  * Parse a filter from JSON string (safely)
  */
 export function parseFilterFromJSON(jsonString: string): Filter | null {
+  logger.functionEntry("parseFilterFromJSON", { inputLength: jsonString?.length });
+
   try {
+    logger.debug(CONTEXT, "parseFilterFromJSON: attempting to parse JSON");
     const parsed = JSON.parse(jsonString);
+    logger.debug(CONTEXT, "parseFilterFromJSON: JSON parsed successfully", { parsedType: typeof parsed });
+    
     if (validateFilter(parsed)) {
+      logger.debug(CONTEXT, "parseFilterFromJSON: filter structure validated successfully");
+      logger.functionExit("parseFilterFromJSON", { success: true, data: { valid: true } });
       return parsed;
     }
-    console.error("Invalid filter structure");
+    
+    logger.warn(CONTEXT, "parseFilterFromJSON: invalid filter structure", { parsedType: typeof parsed });
+    logger.functionExit("parseFilterFromJSON", { success: true, data: { valid: false } });
     return null;
-  } catch {
-    console.error("Failed to parse filter JSON");
+  } catch (error) {
+    logger.error(CONTEXT, "parseFilterFromJSON: failed to parse JSON", {
+      error: error instanceof Error ? error : new Error(String(error)),
+      inputPreview: jsonString?.substring(0, 100),
+    });
+    logger.functionExit("parseFilterFromJSON", { success: false });
     return null;
   }
 }
