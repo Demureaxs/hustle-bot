@@ -1,0 +1,96 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// Prospect entity - stores lead information from various sources
+model Prospect {
+  id           String   @id @default(uuid())
+  source       String   // e.g., "reddit", "upwork", "craigslist", "google_maps"
+  externalId   String   // Unique ID from the source system
+  name         String
+  role         String?  // Role or title (e.g., "Founder", "CEO")
+  company      String?
+  location     String?
+  email        String?
+  phone        String?
+  tags         String   @default("[]") // JSON array stored as string
+  metadata     String   @default("{}") // JSON object for additional data (companySize, lastSeenAt, etc.)
+  status       String   @default("new") // new, reviewed, approved, messaged, responded, disqualified
+  score        Int?     // AI relevance score (0-100)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  outreachLogs OutreachLog[]
+  
+  // Unique constraint on source + externalId to prevent duplicates
+  @@unique([source, externalId])
+  @@index([status])
+  @@index([source])
+  @@index([createdAt])
+}
+
+// Campaign entity - defines outreach campaigns with filters
+model Campaign {
+  id           String   @id @default(uuid())
+  name         String
+  description  String?
+  filters      String   @default("{}") // JSON representation of filter conditions
+  templateId   String?  // Reference to a message template
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  messageTemplate MessageTemplate? @relation(fields: [templateId], references: [id])
+  outreachLogs    OutreachLog[]
+}
+
+// MessageTemplate entity - stores reusable message templates
+model MessageTemplate {
+  id          String   @id @default(uuid())
+  name        String
+  channel     String   // email, dm, whatsapp, linkedin, etc.
+  subject     String?  // For emails
+  body        String   // The message body (can include placeholders like {{name}}, {{company}})
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  campaigns Campaign[]
+}
+
+// OutreachLog entity - tracks message sending attempts and results
+model OutreachLog {
+  id          String    @id @default(uuid())
+  prospectId  String
+  campaignId  String?
+  channel     String    // email, dm, whatsapp, linkedin, etc.
+  templateId  String?
+  body        String?   // Actual message sent (after template substitution)
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  repliedAt   DateTime?
+  status      String    @default("pending") // pending, sent, delivered, failed, replied
+  error       String?   // Error message if failed
+  metadata    String    @default("{}") // Additional info (e.g., message ID from external system)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  prospect Prospect  @relation(fields: [prospectId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id])
+
+  @@index([prospectId])
+  @@index([campaignId])
+  @@index([status])
+  @@index([sentAt])
+}
