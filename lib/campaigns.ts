@@ -263,7 +263,7 @@ export async function createCampaign(payload: CampaignPayload): Promise<ParsedCa
       data: {
         name: payload.name,
         description: payload.description,
-        filters: JSON.stringify(payload.filters || {}),
+        filters: payload.filters ? JSON.stringify(payload.filters) : "{}",
         templateId: payload.templateId,
         active: payload.active ?? true,
       },

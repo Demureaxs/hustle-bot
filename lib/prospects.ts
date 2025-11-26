@@ -458,9 +458,10 @@ export async function bulkUpsertProspects(prospects: ProspectPayload[]): Promise
           if (existing) {
             logger.branchTaken(CONTEXT, "prospect exists, updating", { existingId: existing.id });
 
-            // Update existing
+            // Update existing - parse and merge metadata with explicit typing
+            const existingMetadata: Record<string, unknown> = JSON.parse(existing.metadata) as Record<string, unknown>;
             const mergedMetadata = {
-              ...JSON.parse(existing.metadata),
+              ...existingMetadata,
               ...(prospect.metadata || {}),
             };
 

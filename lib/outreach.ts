@@ -77,9 +77,15 @@ export interface ListOutreachLogsResult {
 }
 
 /**
+ * Valid outreach statuses
+ */
+export const VALID_OUTREACH_STATUSES = ["pending", "sent", "delivered", "failed", "replied"] as const;
+export type OutreachStatusType = (typeof VALID_OUTREACH_STATUSES)[number];
+
+/**
  * Mapping from outreach status to prospect status
  */
-const OUTREACH_TO_PROSPECT_STATUS: Record<string, string> = {
+const OUTREACH_TO_PROSPECT_STATUS: Partial<Record<OutreachStatusType, string>> = {
   sent: "messaged",
   delivered: "messaged",
   replied: "responded",
@@ -251,7 +257,8 @@ export async function createOutreachLog(payload: OutreachLogPayload): Promise<Pa
     logger.dbOperationSuccess(CONTEXT, "prisma.outreachLog.create", { logId: log.id });
 
     // Update prospect status based on outreach status
-    const newProspectStatus = OUTREACH_TO_PROSPECT_STATUS[status];
+    const outreachStatus = status as OutreachStatusType;
+    const newProspectStatus = OUTREACH_TO_PROSPECT_STATUS[outreachStatus];
     if (newProspectStatus) {
       logger.branchTaken(CONTEXT, "updating prospect status based on outreach status", {
         outreachStatus: status,

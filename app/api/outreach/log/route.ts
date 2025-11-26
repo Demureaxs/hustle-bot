@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
-import { createOutreachLog } from "@/lib/outreach";
+import { createOutreachLog, VALID_OUTREACH_STATUSES } from "@/lib/outreach";
 
 const CONTEXT = "API:outreach/log";
 
@@ -110,11 +110,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate status value
-    const validStatuses = ["pending", "sent", "delivered", "failed", "replied"];
-    if (!validStatuses.includes(status)) {
-      logger.warn(CONTEXT, "Invalid status value", { status, validStatuses });
+    if (!VALID_OUTREACH_STATUSES.includes(status as typeof VALID_OUTREACH_STATUSES[number])) {
+      logger.warn(CONTEXT, "Invalid status value", { status, validStatuses: VALID_OUTREACH_STATUSES });
       return NextResponse.json(
-        { error: `Invalid status: must be one of ${validStatuses.join(", ")}` },
+        { error: `Invalid status: must be one of ${VALID_OUTREACH_STATUSES.join(", ")}` },
         { status: 400 }
       );
     }

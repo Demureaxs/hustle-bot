@@ -59,7 +59,16 @@ function sanitizeForLogging(data: unknown, depth: number = 0): unknown {
 
   if (Array.isArray(data)) {
     if (data.length > 20) {
-      return `[Array with ${data.length} items, showing first 20: ${JSON.stringify(data.slice(0, 20).map((item) => sanitizeForLogging(item, depth + 1)))}]`;
+      // For large arrays, just return a summary to avoid expensive processing
+      return { 
+        _type: "array", 
+        length: data.length, 
+        preview: data.slice(0, 5).map((item) => 
+          typeof item === "object" && item !== null 
+            ? { _type: typeof item, keys: Object.keys(item).slice(0, 3) }
+            : sanitizeForLogging(item, depth + 1)
+        )
+      };
     }
     return data.map((item) => sanitizeForLogging(item, depth + 1));
   }
